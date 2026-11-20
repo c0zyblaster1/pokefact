@@ -1,0 +1,28 @@
+[package]
+name = "pokefact"
+version = "1.0.0"
+edition = "2021"
+description = "Terminal Pokedex, battle simulator, damage calculator, and sprite renderer"
+license = "MIT"
+
+[dependencies]
+ureq = { version = "2.9", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+indicatif = "0.17"
+colored = "2.1"
+dirs = "5.0"
+terminal_size = "0.4"
+regex = "1.11"
+rodio = { version = "0.19", default-features = false, features = ["symphonia-mp3", "symphonia-vorbis", "symphonia-wav"] }
+sysinfo = "0.31"
+chrono = "0.4"
+base64 = "0.22"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
