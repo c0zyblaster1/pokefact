@@ -12,7 +12,8 @@ if [ -n "$TERMUX_VERSION" ]; then
     if [ -d "$NDK_LIB" ]; then
         export RUSTFLAGS="-L $NDK_LIB -C link-arg=-lc++abi"
     fi
-    cargo install --git "https://github.com/$REPO"
+    cargo install --force --git "https://github.com/$REPO"
+    ln -sf "$HOME/.cargo/bin/pokefact" "$PREFIX/bin/pokefact"
     echo "Done! Try running: pokefact -p gengar"
     exit 0
 fi
@@ -61,5 +62,5 @@ if ! command -v cargo >/dev/null 2>&1; then
     source "$HOME/.cargo/env"
 fi
 
-cargo install --git "https://github.com/$REPO"
+cargo install --force --git "https://github.com/$REPO"
 echo "Done! Try running: pokefact -p gengar"
