@@ -7,7 +7,11 @@ INSTALL_DIR="$HOME/.local/bin"
 if [ -n "$TERMUX_VERSION" ]; then
     echo "Termux detected. Installing Rust and build tools..."
     pkg update -y
-    pkg install -y rust clang pkg-config git
+    pkg install -y rust clang pkg-config git ndk-multilib
+    NDK_LIB="$PREFIX/opt/ndk-multilib/aarch64-linux-android/lib"
+    if [ -d "$NDK_LIB" ]; then
+        export RUSTFLAGS="-L $NDK_LIB -C link-arg=-lc++abi"
+    fi
     cargo install --git "https://github.com/$REPO"
     echo "Done! Try running: pokefact -p gengar"
     exit 0
