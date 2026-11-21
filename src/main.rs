@@ -897,7 +897,7 @@ fn print_help() {
     println!("  pokefact -i <index> [-a]                    Lookup by National Dex number");
     println!("  pokefact --fight <p1> <p2>                  Interactive 4-move turn-based battle");
     println!("  pokefact <p1> --vs <p2>                     Auto-simulated Battle Arena"    
-    //println!("  pokefact --calc <p1> \"<move>\" <p2>          Lv.50 & Lv.100 damage calculator");
+    println!("  pokefact --calc <p1> \"<move>\" <p2>          Lv.50 & Lv.100 damage calculator");
     println!("  pokefact --type <t1> [t2]                   Dual-type weakness/immunity chart");
     println!("  pokefact -p <name> --animate [--infi]       Animated sprite (10s, or --infi)");
     println!("  pokefact --fetch [name]                     System info fetch with sprite");
