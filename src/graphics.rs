@@ -2,8 +2,10 @@ use std::env;
 use std::fs;
 use std::io::{self, Cursor, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use colored::*;
 use image::codecs::gif::GifDecoder;
@@ -11,6 +13,38 @@ use image::{imageops::FilterType, AnimationDecoder, DynamicImage, GenericImageVi
 use serde_json::Value;
 
 use crate::{center_str, fetch_bytes, term_width, theme_for_types, Rgb, Theme};
+
+fn render_image_direct(img: &DynamicImage, silhouette: bool) -> (usize, Vec<String>) {
+    let (fw, fh) = img.dimensions();
+    let mut rows = Vec::new();
+
+    for y in (0..fh).step_by(2) {
+        let mut line = String::new();
+        for x in 0..fw {
+            let top = img.get_pixel(x, y);
+            let bottom = if y + 1 < fh {
+                img.get_pixel(x, y + 1)
+            } else {
+                Rgba([0, 0, 0, 0])
+            };
+
+            let (tr, tg, tb) = if silhouette { (45, 52, 70) } else { (top[0], top[1], top[2]) };
+            let (br, bg, bb) = if silhouette { (45, 52, 70) } else { (bottom[0], bottom[1], bottom[2]) };
+
+            match (top[3] > 25, bottom[3] > 25) {
+                (false, false) => line.push(' '),
+                (true, false) => line.push_str(&format!("\x1b[38;2;{};{};{}m▀\x1b[0m", tr, tg, tb)),
+                (false, true) => line.push_str(&format!("\x1b[38;2;{};{};{}m▄\x1b[0m", br, bg, bb)),
+                (true, true) => line.push_str(&format!(
+                    "\x1b[38;2;{};{};{};48;2;{};{};{}m▀\x1b[0m",
+                    tr, tg, tb, br, bg, bb
+                )),
+            }
+        }
+        rows.push(line);
+    }
+    (fw as usize, rows)
+}
 
 pub fn render_rgba_lines(img: &DynamicImage, max_width: u32, silhouette: bool) -> (usize, Vec<String>) {
     let (w, h) = img.dimensions();
@@ -38,35 +72,7 @@ pub fn render_rgba_lines(img: &DynamicImage, max_width: u32, silhouette: bool) -
         cropped
     };
 
-    let (fw, fh) = final_img.dimensions();
-    let mut rows = Vec::new();
-
-    for y in (0..fh).step_by(2) {
-        let mut line = String::new();
-        for x in 0..fw {
-            let top = final_img.get_pixel(x, y);
-            let bottom = if y + 1 < fh {
-                final_img.get_pixel(x, y + 1)
-            } else {
-                Rgba([0, 0, 0, 0])
-            };
-
-            let (tr, tg, tb) = if silhouette { (45, 52, 70) } else { (top[0], top[1], top[2]) };
-            let (br, bg, bb) = if silhouette { (45, 52, 70) } else { (bottom[0], bottom[1], bottom[2]) };
-
-            match (top[3] > 25, bottom[3] > 25) {
-                (false, false) => line.push(' '),
-                (true, false) => line.push_str(&format!("\x1b[38;2;{};{};{}m▀\x1b[0m", tr, tg, tb)),
-                (false, true) => line.push_str(&format!("\x1b[38;2;{};{};{}m▄\x1b[0m", br, bg, bb)),
-                (true, true) => line.push_str(&format!(
-                    "\x1b[38;2;{};{};{};48;2;{};{};{}m▀\x1b[0m",
-                    tr, tg, tb, br, bg, bb
-                )),
-            }
-        }
-        rows.push(line);
-    }
-    (fw as usize, rows)
+    render_image_direct(&final_img, silhouette)
 }
 
 pub fn render_sprite_lines(img_bytes: &[u8], max_width: u32, silhouette: bool) -> (usize, Vec<String>) {
@@ -120,7 +126,7 @@ pub fn print_sprite_grid(sprites: &[(String, usize, Vec<String>)], theme: Theme)
     }
 }
 
-pub fn play_animated_sprite(data: &Value) {
+pub fn play_animated_sprite(data: &Value, infinite: bool) {
     let name = data["name"].as_str().unwrap_or("UNKNOWN");
     let slug: String = name.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect();
     let showdown_gif = format!("https://play.pokemonshowdown.com/sprites/ani/{}.gif", slug);
@@ -147,44 +153,113 @@ pub fn play_animated_sprite(data: &Value) {
     let types: Vec<String> = data["types"].as_array().unwrap_or(&vec![]).iter().filter_map(|v| v.as_str().map(String::from)).collect();
     let theme = theme_for_types(&types);
 
-    let mut rendered: Vec<(Vec<String>, u64)> = Vec::new();
-    let mut max_h = 0usize;
-    let mut max_w = 0usize;
+    let (tw, th) = terminal_size::terminal_size()
+        .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
+        .unwrap_or((80, 24));
+
+    let max_cols = tw.saturating_sub(4).clamp(16, 60) as u32;
+    let max_rows = th.saturating_sub(5).clamp(8, 36) as u32;
+    let max_px_h = max_rows * 2;
+
+    let mut raw_frames: Vec<(DynamicImage, u64)> = Vec::with_capacity(frames.len());
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (u32::MAX, u32::MAX, 0u32, 0u32);
+
     for f in frames {
         let (num, den) = f.delay().numer_denom_ms();
         let delay_ms = if den == 0 { 80 } else { ((num / den) as u64).clamp(40, 220) };
         let dyn_img = DynamicImage::ImageRgba8(f.into_buffer());
-        let (w, lines) = render_rgba_lines(&dyn_img, 54, false);
-        max_h = max_h.max(lines.len());
-        max_w = max_w.max(w);
-        rendered.push((lines, delay_ms));
-    }
-
-    println!("\n  {}", format!("{} ({} frames)", name, rendered.len()).truecolor(theme.primary.0, theme.primary.1, theme.primary.2).bold());
-    print!("\x1b[?25l");
-    let _ = io::stdout().flush();
-
-    let total_loops = (80 / rendered.len().max(1)).clamp(2, 6);
-    for l in 0..total_loops {
-        for (idx, (lines, delay)) in rendered.iter().enumerate() {
-            if l > 0 || idx > 0 {
-                print!("\x1b[{}A", max_h);
+        for (x, y, p) in dyn_img.pixels() {
+            if p[3] > 20 {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
             }
-            let top_pad = max_h.saturating_sub(lines.len());
-            for row in 0..max_h {
-                print!("\r    ");
-                if row < top_pad {
-                    println!("{}", " ".repeat(max_w));
-                } else {
-                    println!("{}{}", lines[row - top_pad], "\x1b[K");
-                }
-            }
-            let _ = io::stdout().flush();
-            thread::sleep(Duration::from_millis(*delay));
         }
+        raw_frames.push((dyn_img, delay_ms));
     }
-    print!("\x1b[?25h\n");
-    let _ = io::stdout().flush();
+
+    let (crop_x, crop_y, crop_w, crop_h) = if max_x >= min_x && max_y >= min_y {
+        (min_x, min_y, (max_x - min_x) + 1, (max_y - min_y) + 1)
+    } else {
+        let (w, h) = raw_frames[0].0.dimensions();
+        (0, 0, w.max(1), h.max(1))
+    };
+
+    let scale = (max_cols as f32 / crop_w as f32)
+        .min(max_px_h as f32 / crop_h as f32)
+        .min(1.0);
+    let target_w = ((crop_w as f32 * scale).round() as u32).clamp(2, max_cols);
+    let target_h = ((crop_h as f32 * scale).round() as u32).clamp(2, max_px_h);
+
+    let mut rendered: Vec<(Vec<String>, u64)> = Vec::with_capacity(raw_frames.len());
+    for (img, delay) in raw_frames {
+        let cropped = img.crop_imm(crop_x, crop_y, crop_w, crop_h);
+        let resized = if target_w != crop_w || target_h != crop_h {
+            cropped.resize_exact(target_w, target_h, FilterType::Nearest)
+        } else {
+            cropped
+        };
+        let (_, lines) = render_image_direct(&resized, false);
+        rendered.push((lines, delay));
+    }
+
+    let running = Arc::new(AtomicBool::new(true));
+    let r_clone = Arc::clone(&running);
+    let _ = ctrlc::set_handler(move || {
+        r_clone.store(false, Ordering::SeqCst);
+    });
+
+    let left_pad = " ".repeat(tw.saturating_sub(target_w as usize) / 2);
+    let header_txt = if infinite {
+        format!("{} (infinite | Ctrl+C to stop)", name)
+    } else {
+        format!("{} (10s | Ctrl+C to stop)", name)
+    };
+    let header_line = center_str(&header_txt, tw)
+        .truecolor(theme.primary.0, theme.primary.1, theme.primary.2)
+        .bold()
+        .to_string();
+
+    let mut stdout = io::stdout();
+    let _ = write!(stdout, "\x1b[?1049h\x1b[?25l\x1b[2J");
+    let _ = stdout.flush();
+
+    let start = Instant::now();
+    let limit = Duration::from_secs(10);
+    let mut idx = 0usize;
+
+    while running.load(Ordering::SeqCst) {
+        if !infinite && start.elapsed() >= limit {
+            break;
+        }
+        let (lines, delay) = &rendered[idx];
+        let mut buf = String::with_capacity(4096);
+        buf.push_str("\x1b[H\n");
+        buf.push_str(&header_line);
+        buf.push_str("\x1b[K\n\n");
+        for line in lines {
+            buf.push_str(&left_pad);
+            buf.push_str(line);
+            buf.push_str("\x1b[K\n");
+        }
+        buf.push_str("\x1b[J");
+        let _ = stdout.write_all(buf.as_bytes());
+        let _ = stdout.flush();
+
+        let frame_start = Instant::now();
+        let frame_dur = Duration::from_millis(*delay);
+        while running.load(Ordering::SeqCst) && frame_start.elapsed() < frame_dur {
+            if !infinite && start.elapsed() >= limit {
+                break;
+            }
+            thread::sleep(Duration::from_millis(15));
+        }
+        idx = (idx + 1) % rendered.len();
+    }
+
+    let _ = write!(stdout, "\x1b[?25h\x1b[?1049l");
+    let _ = stdout.flush();
 }
 
 pub fn render_hd_artwork(data: &Value) -> bool {
