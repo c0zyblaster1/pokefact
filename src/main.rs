@@ -58,7 +58,7 @@ pub fn term_width() -> usize {
     terminal_size::terminal_size()
         .map(|(terminal_size::Width(w), _)| w as usize)
         .unwrap_or(112)
-        .max(78)
+        .max(36)
 }
 
 pub fn pad_right(s: &str, width: usize) -> String {
@@ -725,16 +725,31 @@ pub fn display_pokemon(data: &Value, is_wild_shiny: bool, max_facts: usize, play
     let stats: Vec<(String, i32)> = data["stats"].as_array().unwrap_or(&vec![]).iter().filter_map(|s| Some((s[0].as_str()?.to_string(), s[1].as_i64()? as i32))).collect();
 
     let theme = if is_wild_shiny { Theme { primary: (255, 215, 70), secondary: (255, 120, 220) } } else { theme_for_types(&types) };
-    let box_inner = term_width().saturating_sub(6).clamp(62, 102);
+    let tw = term_width();
+    let box_inner = tw.saturating_sub(5).clamp(30, 102);
 
     println!();
-    let title_str = format!(" #{:04} {} - {} [{}]{} ", id, name, data["genus"].as_str().unwrap_or(""), data["generation"].as_str().unwrap_or(""), if play_audio { " [AUDIO]" } else { "" });
-    let side = (box_inner.saturating_sub(title_str.chars().count())) / 2;
-    println!("  {}\n", format!("{}{}{}", "━".repeat(side), title_str, "━".repeat(side)).truecolor(theme.primary.0, theme.primary.1, theme.primary.2).bold());
+    let audio_tag = if play_audio { " [AUDIO]" } else { "" };
+    let full_title = format!(" #{:04} {} - {} [{}]{} ", id, name, data["genus"].as_str().unwrap_or(""), data["generation"].as_str().unwrap_or(""), audio_tag);
+    let short_title = format!(" #{:04} {} [{}]{} ", id, name, data["generation"].as_str().unwrap_or(""), audio_tag);
+    let max_banner_w = box_inner + 2;
+    let title_str = if full_title.chars().count() <= max_banner_w {
+        full_title
+    } else if short_title.chars().count() <= max_banner_w {
+        short_title
+    } else {
+        short_title.chars().take(max_banner_w).collect()
+    };
+    let rem = max_banner_w.saturating_sub(title_str.chars().count());
+    let left_bar = rem / 2;
+    let right_bar = rem - left_bar;
+    let banner = format!("{}{}{}", "━".repeat(left_bar), title_str, "━".repeat(right_bar));
+    println!("  {}\n", banner.truecolor(theme.primary.0, theme.primary.1, theme.primary.2).bold());
 
     if hd_mode {
         graphics::render_hd_artwork(data);
     } else {
+        let sprite_max_w = (tw.saturating_sub(6) as u32).clamp(24, 56);
         let mut jobs = Vec::new();
         if let Some(u) = data["normal_sprite"].as_str().filter(|s| !s.is_empty()) { jobs.push(("NORMAL".to_string(), u.to_string())); }
         if let Some(u) = data["shiny_sprite"].as_str().filter(|s| !s.is_empty()) { jobs.push(("SHINY".to_string(), u.to_string())); }
@@ -744,7 +759,7 @@ pub fn display_pokemon(data: &Value, is_wild_shiny: bool, max_facts: usize, play
             }
         }
         let sprites: Vec<(String, usize, Vec<String>)> = thread::scope(|s| {
-            let hs: Vec<_> = jobs.into_iter().map(|(l, u)| s.spawn(move || fetch_bytes(&u).map(|b| { let (w, ln) = graphics::render_sprite_lines(&b, 56, false); (l, w, ln) }))).collect();
+            let hs: Vec<_> = jobs.into_iter().map(|(l, u)| s.spawn(move || fetch_bytes(&u).map(|b| { let (w, ln) = graphics::render_sprite_lines(&b, sprite_max_w, false); (l, w, ln) }))).collect();
             hs.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
         });
         graphics::print_sprite_grid(&sprites, theme);
@@ -772,7 +787,7 @@ pub fn display_pokemon(data: &Value, is_wild_shiny: bool, max_facts: usize, play
         print_wrapped_box_row("EVOLUTION", data["evolution"].as_str().unwrap_or(""), theme.primary, theme.secondary, content_w, theme);
     }
 
-    print_wrapped_box_row("SIZE/CATCH", &format!("{}m / {}kg  |  Catch Rate: {}/255", data["height"].as_f64().unwrap_or(0.0), data["weight"].as_f64().unwrap_or(0.0), data["capture_rate"].as_i64().unwrap_or(0)), theme.primary, (210, 215, 225), content_w, theme);
+    print_wrapped_box_row("SIZE/CATCH", &format!("{}m / {}kg | Catch: {}/255", data["height"].as_f64().unwrap_or(0.0), data["weight"].as_f64().unwrap_or(0.0), data["capture_rate"].as_i64().unwrap_or(0)), theme.primary, (210, 215, 225), content_w, theme);
 
     let (x4, x2, h, q, imm) = type_matchups(&types);
     println!("{}", format!("  ├{}┤", "─".repeat(box_inner)).truecolor(theme.primary.0, theme.primary.1, theme.primary.2));
@@ -784,15 +799,29 @@ pub fn display_pokemon(data: &Value, is_wild_shiny: bool, max_facts: usize, play
     if !resists.is_empty() { print_wrapped_box_row("RESIST", &resists.join(", "), (95, 230, 130), (145, 235, 170), content_w, theme); }
 
     println!("{}", format!("  ├{}┤", "─".repeat(box_inner)).truecolor(theme.primary.0, theme.primary.1, theme.primary.2));
-    let bar_w = content_w.saturating_sub(26);
+    let show_tag = content_w >= 34;
+    let bar_w = if show_tag { content_w.saturating_sub(23) } else { content_w.saturating_sub(14) };
     let mut bst = 0;
     for (s_name, val) in &stats {
         bst += *val;
         let (tag_str, tag_rgb) = stat_tier_tag(*val);
-        print_box_line(
-            &format!("{} {}  {}  {}", pad_right(s_name, 9).truecolor(theme.primary.0, theme.primary.1, theme.primary.2), format!("{:>3}", val).truecolor(255, 230, 120).bold(), stat_bar_colored(*val, bar_w), pad_right(tag_str, 9).truecolor(tag_rgb.0, tag_rgb.1, tag_rgb.2)),
-            theme,
-        );
+        let row = if show_tag {
+            format!(
+                "{} {} {} {}",
+                pad_right(s_name, 9).truecolor(theme.primary.0, theme.primary.1, theme.primary.2),
+                format!("{:>3}", val).truecolor(255, 230, 120).bold(),
+                stat_bar_colored(*val, bar_w),
+                pad_right(tag_str, 8).truecolor(tag_rgb.0, tag_rgb.1, tag_rgb.2)
+            )
+        } else {
+            format!(
+                "{} {} {}",
+                pad_right(s_name, 9).truecolor(theme.primary.0, theme.primary.1, theme.primary.2),
+                format!("{:>3}", val).truecolor(255, 230, 120).bold(),
+                stat_bar_colored(*val, bar_w)
+            )
+        };
+        print_box_line(&row, theme);
     }
     print_box_line(&pad_right(&format!("BASE STAT TOTAL (BST): {}", bst), content_w).truecolor(255, 255, 255).bold().to_string(), theme);
     println!("{}", format!("  ╰{}╯", "─".repeat(box_inner)).truecolor(theme.primary.0, theme.primary.1, theme.primary.2));
@@ -800,7 +829,7 @@ pub fn display_pokemon(data: &Value, is_wild_shiny: bool, max_facts: usize, play
     if let Some(moves) = data["level_moves"].as_array() {
         if !moves.is_empty() {
             println!("\n  {}", format!("NATURAL LEVEL-UP ATTACKS ({})", moves.len()).truecolor(theme.primary.0, theme.primary.1, theme.primary.2).bold());
-            let cols = (box_inner / 25).clamp(2, 4);
+            let cols = (box_inner / 24).clamp(1, 4);
             for chunk in moves.chunks(cols) {
                 let mut row_s = String::from("  ");
                 for (i, m) in chunk.iter().enumerate() {
