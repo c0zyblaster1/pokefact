@@ -19,6 +19,7 @@ rodio = { version = "0.19", default-features = false, features = ["symphonia-mp3
 sysinfo = "0.31"
 chrono = "0.4"
 base64 = "0.22"
+ctrlc = "3.4"
 
 [profile.release]
 opt-level = "z"
