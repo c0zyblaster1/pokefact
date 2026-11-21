@@ -1,3 +1,4 @@
+mod battle;
 mod graphics;
 mod modes;
 
