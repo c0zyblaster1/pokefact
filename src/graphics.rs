@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::{center_str, fetch_bytes, term_width, theme_for_types, Rgb, Theme};
 
-fn render_image_direct(img: &DynamicImage, silhouette: bool, alpha_thresh: u8) -> (usize, Vec<String>) {
+fn render_image_direct(img: &DynamicImage, silhouette: bool) -> (usize, Vec<String>) {
     let (fw, fh) = img.dimensions();
     let mut rows = Vec::new();
 
@@ -31,7 +31,7 @@ fn render_image_direct(img: &DynamicImage, silhouette: bool, alpha_thresh: u8) -
             let (tr, tg, tb) = if silhouette { (45, 52, 70) } else { (top[0], top[1], top[2]) };
             let (br, bg, bb) = if silhouette { (45, 52, 70) } else { (bottom[0], bottom[1], bottom[2]) };
 
-            match (top[3] > alpha_thresh, bottom[3] > alpha_thresh) {
+            match (top[3] > 25, bottom[3] > 25) {
                 (false, false) => line.push(' '),
                 (true, false) => line.push_str(&format!("\x1b[38;2;{};{};{}m▀\x1b[0m", tr, tg, tb)),
                 (false, true) => line.push_str(&format!("\x1b[38;2;{};{};{}m▄\x1b[0m", br, bg, bb)),
@@ -72,7 +72,7 @@ pub fn render_rgba_lines(img: &DynamicImage, max_width: u32, silhouette: bool) -
         cropped
     };
 
-    render_image_direct(&final_img, silhouette, 25)
+    render_image_direct(&final_img, silhouette)
 }
 
 pub fn render_sprite_lines(img_bytes: &[u8], max_width: u32, silhouette: bool) -> (usize, Vec<String>) {
@@ -135,10 +135,13 @@ fn current_term_dims() -> (usize, usize) {
 pub fn play_animated_sprite(data: &Value, infinite: bool) {
     let name = data["name"].as_str().unwrap_or("UNKNOWN");
     let slug: String = name.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect();
-    let showdown_gif = format!("https://play.pokemonshowdown.com/sprites/ani/{}.gif", slug);
-    let gen5_gif = data["animated_sprite"].as_str().unwrap_or("");
+    let gen5_api = data["animated_sprite"].as_str().unwrap_or("");
+    let gen5_showdown = format!("https://play.pokemonshowdown.com/sprites/gen5ani/{}.gif", slug);
+    let modern_showdown = format!("https://play.pokemonshowdown.com/sprites/ani/{}.gif", slug);
 
-    let gif_bytes = fetch_bytes(&showdown_gif).or_else(|| fetch_bytes(gen5_gif));
+    let gif_bytes = fetch_bytes(gen5_api)
+        .or_else(|| fetch_bytes(&gen5_showdown))
+        .or_else(|| fetch_bytes(&modern_showdown));
     let Some(bytes) = gif_bytes else {
         eprintln!("  {}", "No animated sprite available for this Pokemon.".yellow());
         return;
@@ -205,17 +208,15 @@ pub fn play_animated_sprite(data: &Value, infinite: bool) {
             .min(1.0);
         let target_w = ((crop_w as f32 * scale).round() as u32).clamp(2, max_cols);
         let target_h = ((crop_h as f32 * scale).round() as u32).clamp(2, max_px_h);
-        let downscaled = scale < 0.99;
-        let alpha_thresh = if downscaled { 95 } else { 25 };
 
         let mut rendered = Vec::with_capacity(cropped_frames.len());
         for (img, delay) in &cropped_frames {
-            let resized = if downscaled {
-                img.resize_exact(target_w, target_h, FilterType::Lanczos3)
+            let resized = if target_w != crop_w || target_h != crop_h {
+                img.resize_exact(target_w, target_h, FilterType::Nearest)
             } else {
                 img.clone()
             };
-            let (_, lines) = render_image_direct(&resized, false, alpha_thresh);
+            let (_, lines) = render_image_direct(&resized, false);
             rendered.push((lines, *delay));
         }
 
