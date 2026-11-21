@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::{center_str, fetch_bytes, term_width, theme_for_types, Rgb, Theme};
 
-fn render_image_direct(img: &DynamicImage, silhouette: bool) -> (usize, Vec<String>) {
+fn render_image_direct(img: &DynamicImage, silhouette: bool, alpha_thresh: u8) -> (usize, Vec<String>) {
     let (fw, fh) = img.dimensions();
     let mut rows = Vec::new();
 
@@ -31,7 +31,7 @@ fn render_image_direct(img: &DynamicImage, silhouette: bool) -> (usize, Vec<Stri
             let (tr, tg, tb) = if silhouette { (45, 52, 70) } else { (top[0], top[1], top[2]) };
             let (br, bg, bb) = if silhouette { (45, 52, 70) } else { (bottom[0], bottom[1], bottom[2]) };
 
-            match (top[3] > 25, bottom[3] > 25) {
+            match (top[3] > alpha_thresh, bottom[3] > alpha_thresh) {
                 (false, false) => line.push(' '),
                 (true, false) => line.push_str(&format!("\x1b[38;2;{};{};{}m▀\x1b[0m", tr, tg, tb)),
                 (false, true) => line.push_str(&format!("\x1b[38;2;{};{};{}m▄\x1b[0m", br, bg, bb)),
@@ -72,7 +72,7 @@ pub fn render_rgba_lines(img: &DynamicImage, max_width: u32, silhouette: bool) -
         cropped
     };
 
-    render_image_direct(&final_img, silhouette)
+    render_image_direct(&final_img, silhouette, 25)
 }
 
 pub fn render_sprite_lines(img_bytes: &[u8], max_width: u32, silhouette: bool) -> (usize, Vec<String>) {
@@ -126,6 +126,12 @@ pub fn print_sprite_grid(sprites: &[(String, usize, Vec<String>)], theme: Theme)
     }
 }
 
+fn current_term_dims() -> (usize, usize) {
+    terminal_size::terminal_size()
+        .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
+        .unwrap_or((80, 24))
+}
+
 pub fn play_animated_sprite(data: &Value, infinite: bool) {
     let name = data["name"].as_str().unwrap_or("UNKNOWN");
     let slug: String = name.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect();
@@ -153,14 +159,6 @@ pub fn play_animated_sprite(data: &Value, infinite: bool) {
     let types: Vec<String> = data["types"].as_array().unwrap_or(&vec![]).iter().filter_map(|v| v.as_str().map(String::from)).collect();
     let theme = theme_for_types(&types);
 
-    let (tw, th) = terminal_size::terminal_size()
-        .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
-        .unwrap_or((80, 24));
-
-    let max_cols = tw.saturating_sub(4).clamp(16, 60) as u32;
-    let max_rows = th.saturating_sub(5).clamp(8, 36) as u32;
-    let max_px_h = max_rows * 2;
-
     let mut raw_frames: Vec<(DynamicImage, u64)> = Vec::with_capacity(frames.len());
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (u32::MAX, u32::MAX, 0u32, 0u32);
 
@@ -186,40 +184,60 @@ pub fn play_animated_sprite(data: &Value, infinite: bool) {
         (0, 0, w.max(1), h.max(1))
     };
 
-    let scale = (max_cols as f32 / crop_w as f32)
-        .min(max_px_h as f32 / crop_h as f32)
-        .min(1.0);
-    let target_w = ((crop_w as f32 * scale).round() as u32).clamp(2, max_cols);
-    let target_h = ((crop_h as f32 * scale).round() as u32).clamp(2, max_px_h);
+    let cropped_frames: Vec<(DynamicImage, u64)> = raw_frames
+        .into_iter()
+        .map(|(img, d)| (img.crop_imm(crop_x, crop_y, crop_w, crop_h), d))
+        .collect();
 
-    let mut rendered: Vec<(Vec<String>, u64)> = Vec::with_capacity(raw_frames.len());
-    for (img, delay) in raw_frames {
-        let cropped = img.crop_imm(crop_x, crop_y, crop_w, crop_h);
-        let resized = if target_w != crop_w || target_h != crop_h {
-            cropped.resize_exact(target_w, target_h, FilterType::Nearest)
-        } else {
-            cropped
-        };
-        let (_, lines) = render_image_direct(&resized, false);
-        rendered.push((lines, delay));
-    }
+    let header_txt = if infinite {
+        format!("{} (infinite | Ctrl+C to stop)", name)
+    } else {
+        format!("{} (10s | Ctrl+C to stop)", name)
+    };
+
+    let build_for_size = |tw: usize, th: usize| -> (Vec<(Vec<String>, u64)>, String, usize, String) {
+        let max_cols = tw.saturating_sub(2).clamp(16, 96) as u32;
+        let max_rows = th.saturating_sub(3).clamp(8, 52) as u32;
+        let max_px_h = max_rows * 2;
+
+        let scale = (max_cols as f32 / crop_w as f32)
+            .min(max_px_h as f32 / crop_h as f32)
+            .min(1.0);
+        let target_w = ((crop_w as f32 * scale).round() as u32).clamp(2, max_cols);
+        let target_h = ((crop_h as f32 * scale).round() as u32).clamp(2, max_px_h);
+        let downscaled = scale < 0.99;
+        let alpha_thresh = if downscaled { 95 } else { 25 };
+
+        let mut rendered = Vec::with_capacity(cropped_frames.len());
+        for (img, delay) in &cropped_frames {
+            let resized = if downscaled {
+                img.resize_exact(target_w, target_h, FilterType::Lanczos3)
+            } else {
+                img.clone()
+            };
+            let (_, lines) = render_image_direct(&resized, false, alpha_thresh);
+            rendered.push((lines, *delay));
+        }
+
+        let sprite_rows = rendered.first().map(|(l, _)| l.len()).unwrap_or(0);
+        let left_pad = " ".repeat(tw.saturating_sub(target_w as usize) / 2);
+        let top_pad = th.saturating_sub(sprite_rows + 3) / 2;
+        let header_line = center_str(&header_txt, tw)
+            .truecolor(theme.primary.0, theme.primary.1, theme.primary.2)
+            .bold()
+            .to_string();
+
+        (rendered, left_pad, top_pad, header_line)
+    };
+
+    let (mut tw, mut th) = current_term_dims();
+    let (mut rendered, mut left_pad, mut top_pad, mut header_line) = build_for_size(tw, th);
 
     let running = Arc::new(AtomicBool::new(true));
     let r_clone = Arc::clone(&running);
     let _ = ctrlc::set_handler(move || {
         r_clone.store(false, Ordering::SeqCst);
     });
-
-    let left_pad = " ".repeat(tw.saturating_sub(target_w as usize) / 2);
-    let header_txt = if infinite {
-        format!("{} (infinite | Ctrl+C to stop)", name)
-    } else {
-        format!("{} (10s | Ctrl+C to stop)", name)
-    };
-    let header_line = center_str(&header_txt, tw)
-        .truecolor(theme.primary.0, theme.primary.1, theme.primary.2)
-        .bold()
-        .to_string();
 
     let mut stdout = io::stdout();
     let _ = write!(stdout, "\x1b[?1049h\x1b[?25l\x1b[2J");
@@ -233,11 +251,26 @@ pub fn play_animated_sprite(data: &Value, infinite: bool) {
         if !infinite && start.elapsed() >= limit {
             break;
         }
+
+        let (cur_tw, cur_th) = current_term_dims();
+        if cur_tw != tw || cur_th != th {
+            tw = cur_tw;
+            th = cur_th;
+            let rebuilt = build_for_size(tw, th);
+            rendered = rebuilt.0;
+            left_pad = rebuilt.1;
+            top_pad = rebuilt.2;
+            header_line = rebuilt.3;
+        }
+
         let (lines, delay) = &rendered[idx];
-        let mut buf = String::with_capacity(4096);
-        buf.push_str("\x1b[H\n");
+        let mut buf = String::with_capacity(8192);
+        buf.push_str("\x1b[H");
         buf.push_str(&header_line);
-        buf.push_str("\x1b[K\n\n");
+        buf.push_str("\x1b[K\n");
+        for _ in 0..top_pad {
+            buf.push_str("\x1b[K\n");
+        }
         for line in lines {
             buf.push_str(&left_pad);
             buf.push_str(line);
