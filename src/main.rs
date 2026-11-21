@@ -899,7 +899,7 @@ fn print_help() {
     println!("  pokefact <p1> --vs <p2>                     Auto-simulated Battle Arena");
     println!("  pokefact --calc <p1> \"<move>\" <p2>          Lv.50 & Lv.100 damage calculator");
     println!("  pokefact --type <t1> [t2]                   Dual-type weakness/immunity chart");
-    println!("  pokefact -p <name> --animate                Play animated sprite loop");
+    println!("  pokefact -p <name> --animate [--infi]       Animated sprite (10s, or --infi)");
     println!("  pokefact --fetch [name]                     System info fetch with sprite");
     println!("  pokefact --banner [name]                    Compact shell startup banner");
     println!("  pokefact --daily [-a] [--hd]                Pokemon of the Day + streak");
@@ -923,7 +923,8 @@ fn main() {
     let do_catch = args.iter().any(|a| a == "--catch");
     let show_all = args.iter().any(|a| a == "--all");
     let hd_mode = args.iter().any(|a| a == "--hd");
-    let do_animate = args.iter().any(|a| a == "--animate");
+    let do_infi = args.iter().any(|a| a == "--infi");
+    let do_animate = do_infi || args.iter().any(|a| a == "--animate");
 
     let mut do_export = false;
     let mut export_dest: Option<String> = None;
@@ -1004,7 +1005,7 @@ fn main() {
     pb.finish_and_clear();
 
     if do_animate {
-        graphics::play_animated_sprite(&data);
+        graphics::play_animated_sprite(&data, do_infi);
     } else {
         display_pokemon(&data, is_random && (rand_seed() % 25 == 0), if show_all { 200 } else { 25 }, play_audio, hd_mode);
     }
