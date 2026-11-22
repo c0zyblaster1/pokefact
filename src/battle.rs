@@ -307,7 +307,7 @@ fn build_canon_movepool(data: &Value, types: &[String], phys: bool) -> Vec<Battl
             healing: 0,
             stat_changes: vec![("attack".into(), 1), ("special-attack".into(), 1)],
             target_self: true,
-            desc: "Channels inner focus to boost Attack and Sp. Atk by +1 stage.",
+            desc: "Channels inner focus to boost Attack and Sp. Atk by +1 stage.".to_string(),
             source: "ANIME".to_string(),
         });
     }
