@@ -10,11 +10,9 @@ use serde_json::Value;
 
 use crate::graphics::render_sprite_lines;
 use crate::modes::{catch_pokemon, load_box_names};
-#[cfg(not(target_os = "android"))]
-use crate::spawn_play_cry;
 use crate::{
     center_str, defensive_multipliers, fetch_bytes, fetch_pokemon, get_stat, hp_bar, pad_right,
-    rand_seed, signature_move_for_type, type_rgb, wrap_text, Capitalize, Rgb,
+    rand_seed, signature_move_for_type, spawn_play_cry, type_rgb, wrap_text, Capitalize, Rgb,
 };
 
 #[derive(Clone)]
@@ -167,18 +165,6 @@ impl Drop for ScreenGuard {
         let mut out = io::stdout();
         let _ = write!(out, "\x1b[?25h\x1b[?1049l");
         let _ = out.flush();
-    }
-}
-
-fn safe_play_cry(id: i64, name: String, cry_url: String) -> Option<thread::JoinHandle<()>> {
-    #[cfg(target_os = "android")]
-    {
-        let _ = (id, name, cry_url);
-        None
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        spawn_play_cry(id, name, cry_url)
     }
 }
 
@@ -892,7 +878,7 @@ fn animate_ko(
     } else {
         (player.id, player.name.clone(), player.data["cry_url"].as_str().unwrap_or("").to_string())
     };
-    let cry = safe_play_cry(fid, fname.clone(), fcry);
+    let cry = spawn_play_cry(fid, fname.clone(), fcry);
     let msg = format!("{} fainted!", fname);
     let fx = vec!["        ✖  KNOCKOUT!  ✖".to_string()];
 
@@ -1000,7 +986,7 @@ fn animate_victory(
         )
     };
 
-    let cry = safe_play_cry(wid, wname.clone(), wcry);
+    let cry = spawn_play_cry(wid, wname.clone(), wcry);
     let wc = type_rgb(&wtype);
     let (tw, _) = term_dims();
     let content_w = tw.saturating_sub(6).clamp(28, 92);
@@ -1444,34 +1430,37 @@ pub fn run_fight_mode(p1_spec: Option<&str>, p2_spec: Option<&str>) {
                 let per_page = 4usize;
                 let mut picked = None;
                 loop {
-                    let moves = &p_team[p_idx].moves;
-                    let total_pages = (moves.len() + per_page - 1) / per_page;
-                    let start = page * per_page;
-                    let end = (start + per_page).min(moves.len());
-                    let mut m_lines = Vec::new();
-                    let mults = defensive_multipliers(&e_team[e_idx].types);
-                    for (slot, mv) in moves[start..end].iter().enumerate() {
-                        let cat = if mv.is_status { "Stat" } else if mv.is_physical { "Phys" } else { "Spec" };
-                        let eff_badge = if mv.is_status {
-                            ""
-                        } else {
-                            let m = mults.iter().find(|(k, _)| k.eq_ignore_ascii_case(&mv.mtype)).map(|(_, &v)| v).unwrap_or(1.0);
-                            if m >= 3.9 { " 4x" } else if m >= 1.9 { " 2x" } else if m == 0.0 { " 0x" } else if m <= 0.51 { " .5x" } else { "" }
-                        };
-                        let stab_badge = if !mv.is_status && p_team[p_idx].types.iter().any(|t| t.eq_ignore_ascii_case(&mv.mtype)) { "*" } else { "" };
-                        let header = format!(
-                            "[{}] {}{} ({}/{} {}BP {}/{}PP){}",
-                            slot + 1, mv.name, stab_badge, mv.mtype, cat, mv.power, mv.pp, mv.max_pp, eff_badge
+                    let (total_pages, start, end, m_lines) = {
+                        let moves = &p_team[p_idx].moves;
+                        let total_pages = ((moves.len() + per_page - 1) / per_page).max(1);
+                        let start = page * per_page;
+                        let end = (start + per_page).min(moves.len());
+                        let mut m_lines = Vec::new();
+                        let mults = defensive_multipliers(&e_team[e_idx].types);
+                        for (slot, mv) in moves[start..end].iter().enumerate() {
+                            let cat = if mv.is_status { "Stat" } else if mv.is_physical { "Phys" } else { "Spec" };
+                            let eff_badge = if mv.is_status {
+                                ""
+                            } else {
+                                let m = mults.iter().find(|(k, _)| k.eq_ignore_ascii_case(&mv.mtype)).map(|(_, &v)| v).unwrap_or(1.0);
+                                if m >= 3.9 { " 4x" } else if m >= 1.9 { " 2x" } else if m == 0.0 { " 0x" } else if m <= 0.51 { " .5x" } else { "" }
+                            };
+                            let stab_badge = if !mv.is_status && p_team[p_idx].types.iter().any(|t| t.eq_ignore_ascii_case(&mv.mtype)) { "*" } else { "" };
+                            let header = format!(
+                                "[{}] {}{} ({}/{} {}BP {}/{}PP){}",
+                                slot + 1, mv.name, stab_badge, mv.mtype, cat, mv.power, mv.pp, mv.max_pp, eff_badge
+                            );
+                            let mc = type_rgb(&mv.mtype);
+                            m_lines.push(pad_right(&header, content_w).truecolor(mc.0, mc.1, mc.2).bold().to_string());
+                            m_lines.push(pad_right(&format!("    [{}] {}", mv.source, mv.desc), content_w).dimmed().to_string());
+                        }
+                        m_lines.push(
+                            pad_right(&format!("Page {}/{} — [1-{}] Use | [N] Next | [P] Prev | [B] Back", page + 1, total_pages, end - start), content_w)
+                                .yellow()
+                                .to_string(),
                         );
-                        let mc = type_rgb(&mv.mtype);
-                        m_lines.push(pad_right(&header, content_w).truecolor(mc.0, mc.1, mc.2).bold().to_string());
-                        m_lines.push(pad_right(&format!("    [{}] {}", mv.source, mv.desc), content_w).dimmed().to_string());
-                    }
-                    m_lines.push(
-                        pad_right(&format!("Page {}/{} — [1-{}] Use | [N] Next | [P] Prev | [B] Back", page + 1, total_pages, end - start), content_w)
-                            .yellow()
-                            .to_string(),
-                    );
+                        (total_pages, start, end, m_lines)
+                    };
 
                     let m_pose = StagePose { msg: "Select an attack (* = STAB bonus):", menu_lines: &m_lines, ..Default::default() };
                     draw_stage(&mut p_team[p_idx], &mut e_team[e_idx], counts, &m_pose);
@@ -1486,7 +1475,7 @@ pub fn run_fight_mode(p1_spec: Option<&str>, p2_spec: Option<&str>) {
                     if let Ok(n) = m_in.parse::<usize>() {
                         if n >= 1 && n <= end - start {
                             let global_idx = start + (n - 1);
-                            if moves[global_idx].pp > 0 {
+                            if p_team[p_idx].moves[global_idx].pp > 0 {
                                 picked = Some(PlayerAction::Move(global_idx));
                                 break;
                             }
@@ -1671,7 +1660,7 @@ pub fn run_fight_mode(p1_spec: Option<&str>, p2_spec: Option<&str>) {
                 status_msg = format!("CPU sent out {}!", e_team[e_idx].name);
                 cpu_switched = true;
             } else {
-                animate_victory(&mut p_team[p_idx], &mut e_team[e_idx], (p_alive, p_team.len(), 0, e_team.len()), true, &stats, &running);
+                animate_victory(&mut p_team[p_idx], &mut e_team[e_idx], (p_alive, counts.1, 0, counts.3), true, &stats, &running);
                 break;
             }
         }
@@ -1683,7 +1672,7 @@ pub fn run_fight_mode(p1_spec: Option<&str>, p2_spec: Option<&str>) {
                 if ability_is(&p_team[p_idx], "intimidate") { e_team[e_idx].stages[0] = (e_team[e_idx].stages[0] - 1).clamp(-6, 6); }
                 status_msg = format!("You sent out {}!", p_team[p_idx].name);
             } else {
-                animate_victory(&mut p_team[p_idx], &mut e_team[e_idx], (0, p_team.len(), e_alive, e_team.len()), false, &stats, &running);
+                animate_victory(&mut p_team[p_idx], &mut e_team[e_idx], (0, counts.1, e_alive, counts.3), false, &stats, &running);
                 break;
             }
         } else if !cpu_switched {
