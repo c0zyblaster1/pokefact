@@ -1346,14 +1346,15 @@ pub fn run_fight_mode(p1_spec: Option<&str>, p2_spec: Option<&str>) {
                 _ => {}
             }
         }
-
+        let mut cpu_switched = false;
         if e_team[e_idx].hp == 0 {
             animate_ko(&p_team[p_idx], &e_team[e_idx], counts, true, &running);
             if let Some(next_e) = e_team.iter().position(|f| f.hp > 0) {
                 e_idx = next_e;
                 if ability_is(&e_team[e_idx], "intimidate") { p_team[p_idx].stages[0] = (p_team[p_idx].stages[0] - 1).clamp(-6, 6); }
                 status_msg = format!("CPU sent out {}!", e_team[e_idx].name);
-            } else {
+                cpu_switched = true;
+            else if !cpu_switched {
                 animate_victory(&p_team[p_idx], &e_team[e_idx], (p_alive, p_team.len(), 0, e_team.len()), true, turn, total_dmg, &running);
                 break;
             }
