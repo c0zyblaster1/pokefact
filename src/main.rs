@@ -896,8 +896,8 @@ fn print_help() {
     println!("\n  {}", "pokefact - usage".bright_cyan().bold());
     println!("  pokefact -p <name> [-a] [--hd] [--export]   Pokedex lookup (fuzzy typo matching)");
     println!("  pokefact -i <index> [-a]                    Lookup by National Dex number");
-    println!("  pokefact --fight <p1> <p2>                  Interactive 4-move turn-based battle");
-    println!("  pokefact <p1> --vs <p2>                     Auto-simulated Battle Arena"    
+    println!("  pokefact --fight [p1,p2...] [e1,e2...]      Animated RPG battle (or --fight --box)");
+    println!("  pokefact <p1> --vs <p2>                     Auto-simulated Battle Arena");
     println!("  pokefact --calc <p1> \"<move>\" <p2>          Lv.50 & Lv.100 damage calculator");
     println!("  pokefact --type <t1> [t2]                   Dual-type weakness/immunity chart");
     println!("  pokefact -p <name> --animate [--infi]       Animated sprite (10s, or --infi)");
@@ -938,16 +938,17 @@ fn main() {
         }
     }
 
-    if args.iter().any(|a| a == "--quiz" || a == "-q") { modes::run_quiz_mode(play_audio); return; }
-    if args.iter().any(|a| a == "--box" || a == "-b") { modes::show_box(); return; }
-    if args.iter().any(|a| a == "--daily") { modes::run_daily_mode(play_audio, hd_mode); return; }
-
     if let Some(pos) = args.iter().position(|a| a == "--fight") {
         let p1 = args.get(pos + 1).map(|s| s.as_str());
         let p2 = args.get(pos + 2).filter(|s| !s.starts_with('-')).map(|s| s.as_str());
         battle::run_fight_mode(p1, p2);
         return;
     }
+
+    if args.iter().any(|a| a == "--quiz" || a == "-q") { modes::run_quiz_mode(play_audio); return; }
+    if args.iter().any(|a| a == "--box" || a == "-b") { modes::show_box(); return; }
+    if args.iter().any(|a| a == "--daily") { modes::run_daily_mode(play_audio, hd_mode); return; }
+
     if let Some(pos) = args.iter().position(|a| a == "--calc") {
         if pos + 3 < args.len() { modes::run_calc_mode(&args[pos + 1], &args[pos + 2], &args[pos + 3]); return; }
         eprintln!("  {}", "Usage: pokefact --calc gengar \"shadow ball\" lucario".red()); return;
