@@ -4,12 +4,13 @@ mod modes;
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::path::PathBuf;
 use std::thread;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
+#[cfg(not(target_os = "android"))]
 use rodio::{Decoder, OutputStream, Sink};
 use serde_json::Value;
 
@@ -151,22 +152,58 @@ pub fn spawn_play_cry(id: i64, name: String, cry_url: String) -> Option<thread::
         let ogg_file = cries_dir().join(format!("{}.ogg", id));
         let showdown_url = format!("https://play.pokemonshowdown.com/audio/cries/{}.mp3", slug);
 
-        let play_bytes = |bytes: Vec<u8>| -> bool {
-            let Ok((_stream, handle)) = OutputStream::try_default() else { return false; };
-            let Ok(sink) = Sink::try_new(&handle) else { return false; };
-            let Ok(source) = Decoder::new(Cursor::new(bytes)) else { return false; };
-            sink.set_volume(1.0);
-            sink.append(source);
-            sink.sleep_until_end();
-            true
+        let audio_file = if mp3_file.exists() {
+            Some(mp3_file)
+        } else if let Some(b) = fetch_bytes(&showdown_url) {
+            let _ = fs::write(&mp3_file, &b);
+            Some(mp3_file)
+        } else if !cry_url.is_empty() && ogg_file.exists() {
+            Some(ogg_file)
+        } else if !cry_url.is_empty() {
+            fetch_bytes(&cry_url).map(|b| {
+                let _ = fs::write(&ogg_file, &b);
+                ogg_file
+            })
+        } else {
+            None
         };
 
-        if let Ok(b) = fs::read(&mp3_file) { if play_bytes(b) { return; } }
-        else if let Some(b) = fetch_bytes(&showdown_url) { let _ = fs::write(&mp3_file, &b); if play_bytes(b) { return; } }
+        let Some(path) = audio_file else { return; };
 
-        if !cry_url.is_empty() {
-            if let Ok(b) = fs::read(&ogg_file) { if play_bytes(b) { return; } }
-            else if let Some(b) = fetch_bytes(&cry_url) { let _ = fs::write(&ogg_file, &b); if play_bytes(b) { return; } }
+        #[cfg(target_os = "android")]
+        {
+            use std::process::{Command, Stdio};
+            let p = path.to_string_lossy().to_string();
+            let players: &[(&str, &[&str])] = &[
+                ("play-audio", &[&p]),
+                ("mpv", &["--no-video", "--really-quiet", &p]),
+                ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet", &p]),
+                ("termux-media-player", &["play", &p]),
+            ];
+            for (bin, args) in players {
+                if let Ok(status) = Command::new(bin)
+                    .args(*args)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                {
+                    if status.success() {
+                        return;
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            if let Ok(bytes) = fs::read(&path) {
+                let Ok((_stream, handle)) = OutputStream::try_default() else { return; };
+                let Ok(sink) = Sink::try_new(&handle) else { return; };
+                let Ok(source) = Decoder::new(std::io::Cursor::new(bytes)) else { return; };
+                sink.set_volume(1.0);
+                sink.append(source);
+                sink.sleep_until_end();
+            }
         }
     }))
 }
