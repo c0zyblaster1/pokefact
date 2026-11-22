@@ -943,8 +943,10 @@ fn main() {
     if args.iter().any(|a| a == "--daily") { modes::run_daily_mode(play_audio, hd_mode); return; }
 
     if let Some(pos) = args.iter().position(|a| a == "--fight") {
-        if pos + 2 < args.len() { modes::run_fight_mode(&args[pos + 1], &args[pos + 2]); return; }
-        eprintln!("  {}", "Usage: pokefact --fight <pokemon1> <pokemon2>".red()); return;
+        let p1 = args.get(pos + 1).map(|s| s.as_str());
+        let p2 = args.get(pos + 2).filter(|s| !s.starts_with('-')).map(|s| s.as_str());
+        battle::run_fight_mode(p1, p2);
+        return;
     }
     if let Some(pos) = args.iter().position(|a| a == "--calc") {
         if pos + 3 < args.len() { modes::run_calc_mode(&args[pos + 1], &args[pos + 2], &args[pos + 3]); return; }
