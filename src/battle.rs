@@ -1354,7 +1354,7 @@ pub fn run_fight_mode(p1_spec: Option<&str>, p2_spec: Option<&str>) {
                 if ability_is(&e_team[e_idx], "intimidate") { p_team[p_idx].stages[0] = (p_team[p_idx].stages[0] - 1).clamp(-6, 6); }
                 status_msg = format!("CPU sent out {}!", e_team[e_idx].name);
                 cpu_switched = true;
-            else if !cpu_switched {
+            } else {
                 animate_victory(&p_team[p_idx], &e_team[e_idx], (p_alive, p_team.len(), 0, e_team.len()), true, turn, total_dmg, &running);
                 break;
             }
@@ -1370,7 +1370,7 @@ pub fn run_fight_mode(p1_spec: Option<&str>, p2_spec: Option<&str>) {
                 animate_victory(&p_team[p_idx], &e_team[e_idx], (0, p_team.len(), e_alive, e_team.len()), false, turn, total_dmg, &running);
                 break;
             }
-        } else {
+        } else if !cpu_switched {
             status_msg = format!("What will {} do?", p_team[p_idx].name);
         }
 
