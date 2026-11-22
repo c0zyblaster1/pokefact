@@ -562,7 +562,7 @@ pub fn run_vs_mode(p1_name: &str, p2_name: &str, play_audio: bool) {
     let mut winner_name = "DRAW";
     for turn in 1..=3 {
         if hp1 <= 0 || hp2 <= 0 { break; }
-        let mut log_hit = |atk: &str, def: &str, mv: &str, dmg: i32, eff: f32, dhp: &mut i32, dmax: i32, col: Rgb| {
+        let log_hit = |atk: &str, def: &str, mv: &str, dmg: i32, eff: f32, dhp: &mut i32, dmax: i32, col: Rgb| {
             *dhp = (*dhp - dmg).max(0);
             let tag = if eff >= 3.9 { " [4x]" } else if eff >= 1.9 { " [2x]" } else if eff == 0.0 { " [0x]" } else if eff <= 0.51 { " [0.5x]" } else { "" };
             let txt = format!("T{}: {} used {} -> -{} HP{} ({}: {}/{})", turn, atk, mv, dmg, tag, def, *dhp, dmax);
