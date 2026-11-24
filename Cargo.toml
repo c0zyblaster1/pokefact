@@ -2,7 +2,7 @@
 name = "pokefact"
 version = "1.0.0"
 edition = "2021"
-description = "Terminal Pokedex, battle simulator, damage calculator, and sprite renderer"
+description = "Terminal Pokedex, animated battle engine, damage calculator, and sprite renderer"
 license = "MIT"
 
 [dependencies]
@@ -15,11 +15,14 @@ colored = "2.1"
 dirs = "5.0"
 terminal_size = "0.4"
 regex = "1.11"
-rodio = { version = "0.19", default-features = false, features = ["symphonia-mp3", "symphonia-vorbis", "symphonia-wav"] }
 sysinfo = "0.31"
 chrono = "0.4"
 base64 = "0.22"
 ctrlc = "3.4"
+crossterm = "0.28"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rodio = { version = "0.19", default-features = false, features = ["symphonia-mp3", "symphonia-vorbis", "symphonia-wav"] }
 
 [profile.release]
 opt-level = "z"
