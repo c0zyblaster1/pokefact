@@ -933,7 +933,9 @@ fn print_help() {
     println!("\n  {}", "pokefact - usage".bright_cyan().bold());
     println!("  pokefact -p <name> [-a] [--hd] [--export]   Pokedex lookup (fuzzy typo matching)");
     println!("  pokefact -i <index> [-a]                    Lookup by National Dex number");
-    println!("  pokefact --fight [p1,p2...] [e1,e2...]      Animated RPG battle (or --fight --box)");
+    println!("  pokefact --battle <p1> [p2] [--nomusic]     Animated RPG battle (omit p2 for Ranked Random!)");
+    println!("  pokefact --dispstreak                       Show current & highest Ranked win streak");
+    println!("  pokefact --history                          Show Random Opponent battle history");
     println!("  pokefact <p1> --vs <p2>                     Auto-simulated Battle Arena");
     println!("  pokefact --calc <p1> \"<move>\" <p2>          Lv.50 & Lv.100 damage calculator");
     println!("  pokefact --type <t1> [t2]                   Dual-type weakness/immunity chart");
@@ -975,10 +977,19 @@ fn main() {
         }
     }
 
-    if let Some(pos) = args.iter().position(|a| a == "--fight") {
-        let p1 = args.get(pos + 1).map(|s| s.as_str());
+    if args.iter().any(|a| a == "--dispstreak" || a == "--streak") {
+        battle::show_streak();
+        return;
+    }
+    if args.iter().any(|a| a == "--history" || a == "--battlelog") {
+        battle::show_history();
+        return;
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--battle" || a == "--fight") {
+        let muted = args.iter().any(|a| a == "--nomusic" || a == "--mute");
+        let p1 = args.get(pos + 1).filter(|s| *s == "--box" || !s.starts_with('-')).map(|s| s.as_str());
         let p2 = args.get(pos + 2).filter(|s| !s.starts_with('-')).map(|s| s.as_str());
-        battle::run_fight_mode(p1, p2);
+        battle::run_fight_mode(p1, p2, muted);
         return;
     }
 
